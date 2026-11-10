@@ -16,6 +16,7 @@ import numpy as np
 from PIL import Image
 
 from .fetch import files_between, open_remote
+from . import glm, wind
 from .goes import Grid, read_cmip, resample
 from .model import KELVIN, Config, pixel_nm, run_nowcast
 
@@ -25,6 +26,9 @@ PRODUCT, BAND = "ABI-L2-CMIPC", 13      # CONUS sector, 5-minute scans, covers Â
 FALLBACK = "ABI-L2-CMIPF"               # full disk, 10-minute scans
 FRAME_GAP = timedelta(minutes=10)
 N_FRAMES = 3
+LIGHTNING_MIN = 60          # flashes kept for the map
+LIGHTNING_RECENT_MIN = 30   # flashes this recent within 50 nm set the storms-nearby flag
+PAGES = "https://endelsswaltz.github.io/bermuda-weather-pipeline/"
 
 
 def pick_frames(available: list[tuple[datetime, str]], latest: datetime | None = None) -> list[tuple[datetime, str]]:
@@ -108,6 +112,27 @@ def main(argv=None):
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+
+    now = datetime.now(timezone.utc)
+    try:
+        grid_wind = wind.fresh_or_fetch(f"{PAGES}wind.json", LAT, LON, HALF_WIDTH, now)
+        (out / "wind.json").write_text(json.dumps(grid_wind, separators=(",", ":")))
+        wind_info = {"url": "wind.json", "generated": grid_wind["generated"]}
+    except Exception as e:  # noqa: BLE001
+        print(f"wind unavailable: {e}")
+        wind_info = None
+
+    # Lightning is a separate source; if it fails, publish the nowcast without it.
+    try:
+        flashes, n_files = glm.load_flashes(LAT, LON, HALF_WIDTH, LIGHTNING_MIN, now)
+        lightning = {**glm.summary(flashes, LAT, LON, now, LIGHTNING_MIN, LIGHTNING_RECENT_MIN), "files": n_files,
+                     "generated": now.isoformat(timespec="seconds"), "source": "NOAA GOES-19 GLM via AWS"}
+        (out / "lightning.geojson").write_text(json.dumps({**glm.to_geojson(flashes), "generated": lightning["generated"]}))
+        if lightning["recent_50nm"] > 0:
+            nc.storms_nearby = True
+    except Exception as e:  # noqa: BLE001
+        print(f"lightning unavailable: {e}")
+        lightning = None
     colorize(to_mercator_rows(bts[-1], grid)).save(out / "ir.png", optimize=True)
     payload = {
         **nc.__dict__,
@@ -115,12 +140,17 @@ def main(argv=None):
         "scans": [t.isoformat() for t in times],
         "product": f"GOES-19 ABI {product} band 13",
         "image": {"url": "ir.png", "bounds": grid.bounds, "time": times[-1].isoformat()},
+        "lightning": lightning,
+        "wind": wind_info,
         "source": "NOAA GOES-19 via the NOAA Open Data Dissemination program on AWS",
     }
     (out / "nowcast.json").write_text(json.dumps(payload, indent=1, default=str))
     (out / "motion.json").write_text(json.dumps({"time": times[-1].isoformat(), "vectors": motion_vectors(flow, grid)}))
     print(f"{times[-1]:%Y-%m-%d %H:%M} UTC ({product}): {nc.text} [cloud 25 nm {nc.cloud_cover_25nm}%, "
           f"coldest 50 nm {nc.coldest_top_50nm_c} Â°C, confidence {nc.confidence}]")
+    if lightning:
+        print(f"lightning: {lightning['count_box']} flashes in {LIGHTNING_MIN} min, {lightning['recent_50nm']} within 50 nm "
+              f"in {LIGHTNING_RECENT_MIN} min, nearest {lightning['nearest_nm']} nm {lightning['nearest_dir']}")
 
 
 if __name__ == "__main__":

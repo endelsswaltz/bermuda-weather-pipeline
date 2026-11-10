@@ -10,15 +10,24 @@ import re
 from datetime import datetime, timedelta, timezone
 
 import requests
+from urllib3.util.retry import Retry
 
 BUCKET = "https://noaa-goes19.s3.amazonaws.com"
 _session = requests.Session()
 _session.headers["User-Agent"] = "bermuda-weather-nowcast (+https://bermuda-weather.vercel.app)"
+# S3 occasionally drops a connection; retry, and allow enough pooled connections for parallel downloads.
+_adapter = requests.adapters.HTTPAdapter(
+    pool_maxsize=16,
+    max_retries=Retry(total=4, backoff_factor=0.5, status_forcelist=(500, 502, 503, 504), allowed_methods=("GET", "HEAD")),
+)
+_session.mount("https://", _adapter)
 
 
-def list_files(product: str, band: int, hour: datetime) -> list[tuple[datetime, str]]:
-    """(scan start, key) for one hour of a product such as 'ABI-L2-CMIPC'."""
-    prefix = f"{product}/{hour:%Y/%j/%H}/OR_{product}-M6C{band:02d}_G19_"
+def list_files(product: str, band: int | None, hour: datetime) -> list[tuple[datetime, str]]:
+    """(scan start, key) for one hour of a product such as 'ABI-L2-CMIPC' (band None for
+    products without bands, such as 'GLM-L2-LCFA')."""
+    kind = f"{product}-M6C{band:02d}" if band is not None else product
+    prefix = f"{product}/{hour:%Y/%j/%H}/OR_{kind}_G19_"
     keys: list[str] = []
     token = None
     while True:
@@ -42,7 +51,7 @@ def list_files(product: str, band: int, hour: datetime) -> list[tuple[datetime, 
     return sorted(out)
 
 
-def files_between(product: str, band: int, start: datetime, end: datetime) -> list[tuple[datetime, str]]:
+def files_between(product: str, band: int | None, start: datetime, end: datetime) -> list[tuple[datetime, str]]:
     hour = start.replace(minute=0, second=0, microsecond=0)
     found = []
     while hour <= end:
@@ -97,3 +106,10 @@ class RangeFile(io.RawIOBase):
 
 def open_remote(key: str) -> RangeFile:
     return RangeFile(f"{BUCKET}/{key}")
+
+
+def download(key: str) -> bytes:
+    """A whole (small) file, for products like GLM where we need every record."""
+    r = _session.get(f"{BUCKET}/{key}", timeout=60)
+    r.raise_for_status()
+    return r.content
