@@ -13,6 +13,11 @@ Nothing here needs an account or API key. Raw satellite files are never stored i
 | `nowcast.json` | ~1 KB | Nowcast text, status, ETA, direction, speed (kt), cloud cover within 25/50 nm, coldest cloud top within 50 nm, storm flag, confidence, scan times |
 | `ir.png` | ~60 KB | Band 13 infrared, ±5° around Bermuda, NASA GIBS colour table, rows spaced for Web Mercator; `nowcast.json.image.bounds` gives the corners |
 | `motion.json` | ~12 KB | Cloud motion every 0.5° as `[lat, lon, east kt, north kt]` |
+| `lightning.geojson` | ~0–500 KB | GOES-19 GLM flashes in the ±5° box from the last 60 min, newest first, capped at 5,000; properties `t` (epoch s), `e` (energy, fJ), `a` (area, km²) |
+| `wind.json` | ~12 KB | Open-Meteo 10 m wind on a 1° grid (11×11), 3 h back to 6 h ahead, as `u`/`v` in kt indexed `[time][row][col]`, rows north to south |
+
+`nowcast.json` also carries a `lightning` summary: flashes within 25/50 nm over the last 60 min and
+the last 30 min, and the nearest flash. Any flash within 50 nm in the last 30 min sets `storms_nearby`.
 
 `status` is one of `rain_now`, `rain_expected`, `no_rain`, `unknown`. Times are UTC ISO 8601.
 The app treats the nowcast as stale when the newest scan is more than 45 minutes old.
@@ -37,6 +42,24 @@ The app treats the nowcast as stale when the newest scan is more than 45 minutes
    minus 6 K. The storm flag is set when the coldest top within 50 nm is below −52 °C.
 7. **Confidence**: high/medium/low from the lead time and how much the two motion estimates
    (scan 1→2 and 2→3) disagree at Bermuda.
+
+## Lightning and wind
+
+- **Lightning**: GOES-19 GLM L2 LCFA files (20 s each, ~320 KB) from the same NOAA bucket. Each run
+  downloads the last hour (~180 files, in parallel), keeps good-quality flashes (`flash_quality_flag`
+  0) in the box, and unpacks GLM's unsigned 16-bit fields. GLM sees in-cloud and cloud-to-ground
+  lightning; detection efficiency over the western Atlantic is roughly 70–90% and positions are good
+  to about 5–10 km.
+- **Wind**: Open-Meteo has no gridded download, so the job asks for 121 points in one request. It
+  refreshes about hourly (Open-Meteo's free tier allows 10,000 location-calls a day) and otherwise
+  re-publishes the previous `wind.json`, because each Pages deploy replaces the whole site.
+- If either source fails, the run still publishes the rain nowcast without it.
+
+## Licences
+
+- GOES-19 ABI and GLM: NOAA open data (NODD), no restrictions; credit NOAA.
+- Open-Meteo: CC BY 4.0, free for non-commercial use; credit Open-Meteo.
+- NASA GIBS colour table: NASA open data.
 
 ## Limits
 
