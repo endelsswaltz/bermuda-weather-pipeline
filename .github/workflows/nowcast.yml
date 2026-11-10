@@ -2,7 +2,7 @@ name: nowcast
 
 on:
   schedule:
-    - cron: "*/15 * * * *"   # GitHub may start scheduled runs late or skip some when busy
+    - cron: "*/15 * * * *"   # backup only: GitHub runs these rarely for this repo; cron-job.org triggers the real 15-minute runs
   workflow_dispatch:
   push:
     branches: [main]
@@ -40,7 +40,7 @@ jobs:
       - id: deploy
         uses: actions/deploy-pages@v4
       - name: Keep the schedule alive
-        if: github.event_name == 'schedule'
+        if: github.event_name != 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/nowcast.yml/enable"

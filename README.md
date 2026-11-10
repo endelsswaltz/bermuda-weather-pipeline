@@ -93,9 +93,12 @@ RA, DZ, SH or TS at the station counts as rain; VCSH (showers in the vicinity) d
 
 ## Scheduling
 
-`.github/workflows/nowcast.yml` runs on a 15-minute cron, runs the tests, runs the nowcast and
-deploys `site/` to Pages. GitHub turns off scheduled workflows after 60 days without repository
-activity, so each scheduled run re-enables its own workflow through the API.
+GitHub's own cron (`*/15` in `.github/workflows/nowcast.yml`) turned out to be unreliable for this
+repo: one scheduled run in about nine hours. The real trigger is an external scheduler
+(cron-job.org) that calls GitHub's `workflow_dispatch` API every 15 minutes with a fine-grained
+token limited to this repository's Actions. The GitHub cron stays as a backup. Each run re-enables
+the workflow through the API, so it isn't switched off after 60 days without repository activity,
+which would also block the external trigger.
 
 ## Attribution
 
