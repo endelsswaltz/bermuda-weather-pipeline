@@ -15,10 +15,10 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from .fetch import files_between, open_remote
-from . import glm, wind
-from .goes import Grid, read_cmip, resample
+from . import glm, rain, wind
+from .goes import Grid
 from .model import KELVIN, Config, pixel_nm, run_nowcast
+from .scenes import listing, nearest, on_grid
 
 LAT, LON = 32.3, -64.78
 HALF_WIDTH, STEP = 5.0, 0.04
@@ -26,7 +26,7 @@ PRODUCT, BAND = "ABI-L2-CMIPC", 13      # CONUS sector, 5-minute scans, covers Â
 FALLBACK = "ABI-L2-CMIPF"               # full disk, 10-minute scans
 FRAME_GAP = timedelta(minutes=10)
 N_FRAMES = 3
-LIGHTNING_MIN = 60          # flashes kept for the map
+LIGHTNING_MIN = 180         # flashes kept for the map's timeline (built up run by run)
 LIGHTNING_RECENT_MIN = 30   # flashes this recent within 50 nm set the storms-nearby flag
 PAGES = "https://endelsswaltz.github.io/bermuda-weather-pipeline/"
 
@@ -45,16 +45,22 @@ def pick_frames(available: list[tuple[datetime, str]], latest: datetime | None =
     return chosen if len(chosen) == N_FRAMES else []
 
 
-def load_frames(grid: Grid, at: datetime | None = None):
+def load_frames(grid: Grid, at: datetime | None = None, cache: Path | None = None):
+    """Three band 13 scans 10 minutes apart ending at `at` (default now), on the grid."""
     end = at or datetime.now(timezone.utc)
-    window = (grid.lats[-1], grid.lats[0], grid.lons[0], grid.lons[-1])
     for product in (PRODUCT, FALLBACK):
-        frames = pick_frames(files_between(product, BAND, end - timedelta(minutes=45), end))
+        frames = pick_frames(listing(BAND, end - timedelta(minutes=45), end, product))
         if frames:
-            bts = [resample(read_cmip(open_remote(k), window), grid) for _, k in frames]
+            bts = [on_grid(k, grid, cache) for _, k in frames]
             if np.isfinite(bts[-1]).mean() > 0.9:
                 return [t for t, _ in frames], bts, product
     raise RuntimeError("no usable GOES-19 band 13 scans in the last 45 minutes")
+
+
+def load_band(grid: Grid, when: datetime, band: int, product: str, cache: Path | None = None):
+    """Another band from the scan at `when` (None when that scan has no file for it)."""
+    hit = nearest(listing(band, when - timedelta(minutes=5), when + timedelta(minutes=5), product), when)
+    return on_grid(hit[1], grid, cache) if hit else None
 
 
 def to_mercator_rows(field_: np.ndarray, grid: Grid) -> np.ndarray:
@@ -122,12 +128,24 @@ def main(argv=None):
         print(f"wind unavailable: {e}")
         wind_info = None
 
+    try:
+        rain_index = rain.build_frames(out, grid, times[-1], PAGES, to_mercator_rows, now)
+        rain_info = {"url": "rain/index.json", "frames": len(rain_index["frames"]), "latest": rain_index["frames"][-1]["time"] if rain_index["frames"] else None}
+    except Exception as e:  # noqa: BLE001
+        print(f"rain estimate unavailable: {e}")
+        rain_info = None
+
     # Lightning is a separate source; if it fails, publish the nowcast without it.
     try:
-        flashes, n_files = glm.load_flashes(LAT, LON, HALF_WIDTH, LIGHTNING_MIN, now)
+        try:
+            published = glm._session.get(f"{PAGES}lightning.geojson", timeout=20).json()
+        except Exception:  # noqa: BLE001 - first run, or Pages is down
+            published = None
+        flashes, n_files, covered_to = glm.load_incremental(published, LAT, LON, HALF_WIDTH, now, LIGHTNING_MIN)
         lightning = {**glm.summary(flashes, LAT, LON, now, LIGHTNING_MIN, LIGHTNING_RECENT_MIN), "files": n_files,
                      "generated": now.isoformat(timespec="seconds"), "source": "NOAA GOES-19 GLM via AWS"}
-        (out / "lightning.geojson").write_text(json.dumps({**glm.to_geojson(flashes), "generated": lightning["generated"]}))
+        (out / "lightning.geojson").write_text(json.dumps(
+            {**glm.to_geojson(flashes), "generated": lightning["generated"], "covered_to": covered_to, "window_min": LIGHTNING_MIN}))
         if lightning["recent_50nm"] > 0:
             nc.storms_nearby = True
     except Exception as e:  # noqa: BLE001
@@ -141,6 +159,7 @@ def main(argv=None):
         "product": f"GOES-19 ABI {product} band 13",
         "image": {"url": "ir.png", "bounds": grid.bounds, "time": times[-1].isoformat()},
         "lightning": lightning,
+        "rain": rain_info,
         "wind": wind_info,
         "source": "NOAA GOES-19 via the NOAA Open Data Dissemination program on AWS",
     }

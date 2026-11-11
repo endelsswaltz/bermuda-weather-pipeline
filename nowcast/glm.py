@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 import h5py
 import numpy as np
 
-from .fetch import download, files_between
+from .fetch import _session, download, files_between  # noqa: F401 (_session is used by run.py)
 
 PRODUCT = "GLM-L2-LCFA"
 J2000 = datetime(2000, 1, 1, 12, tzinfo=timezone.utc)
@@ -103,6 +103,36 @@ def load_flashes(lat0: float, lon0: float, half_width: float, minutes: int = 60,
     return Flashes.concat(parts), len(keys)
 
 
+def from_geojson(gj: dict) -> Flashes:
+    f = gj.get("features", [])
+    col = lambda fn: np.array([fn(x) for x in f], dtype=np.float64)  # noqa: E731
+    if not f:
+        return Flashes.empty()
+    return Flashes(col(lambda x: x["properties"]["t"]), col(lambda x: x["geometry"]["coordinates"][1]),
+                   col(lambda x: x["geometry"]["coordinates"][0]), col(lambda x: x["properties"].get("e", 0)),
+                   col(lambda x: x["properties"].get("a", 0)))
+
+
+def load_incremental(previous: dict | None, lat0: float, lon0: float, half_width: float, now: datetime,
+                     keep_min: int = 180, first_min: int = 60) -> tuple[Flashes, int, float]:
+    """Flashes from the last `keep_min` minutes: those already published plus the files since.
+
+    Returns (flashes, files read, covered_to epoch). With nothing usable published it reads the
+    last `first_min` minutes, and the window grows from there run by run.
+    """
+    covered = float(previous.get("covered_to", 0)) if previous else 0.0
+    cutoff = now.timestamp() - keep_min * 60
+    if previous and covered > cutoff:
+        old = from_geojson(previous)
+        old = old.select(old.t > cutoff)
+        since = datetime.fromtimestamp(covered, timezone.utc)
+        new, n = load_flashes(lat0, lon0, half_width, max(1, int((now - since).total_seconds() // 60) + 1), now)
+        new = new.select(new.t > covered)
+        return Flashes.concat([old, new]), n, now.timestamp()
+    fl, n = load_flashes(lat0, lon0, half_width, first_min, now)
+    return fl, n, now.timestamp()
+
+
 def distance_nm(lat0: float, lon0: float, lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
     dx = (lon - lon0) * 60 * math.cos(math.radians(lat0))
     dy = (lat - lat0) * 60
@@ -132,7 +162,7 @@ def summary(fl: Flashes, lat0: float, lon0: float, now: datetime, window_min: in
     return out
 
 
-def to_geojson(fl: Flashes, max_features: int = 5000) -> dict:
+def to_geojson(fl: Flashes, max_features: int = 8000) -> dict:
     """Newest flashes first, capped so the file stays small in a big outbreak."""
     order = np.argsort(-fl.t)[:max_features]
     return {

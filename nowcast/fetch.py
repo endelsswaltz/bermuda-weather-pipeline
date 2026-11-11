@@ -27,7 +27,8 @@ def list_files(product: str, band: int | None, hour: datetime) -> list[tuple[dat
     """(scan start, key) for one hour of a product such as 'ABI-L2-CMIPC' (band None for
     products without bands, such as 'GLM-L2-LCFA')."""
     kind = f"{product}-M6C{band:02d}" if band is not None else product
-    prefix = f"{product}/{hour:%Y/%j/%H}/OR_{kind}_G19_"
+    # ABI products without bands (e.g. RRQPEF) still carry the scan mode: "OR_ABI-L2-RRQPEF-M6_G19_".
+    prefix = f"{product}/{hour:%Y/%j/%H}/OR_{kind}{'-M6' if band is None and product.startswith('ABI') else ''}_G19_"
     keys: list[str] = []
     token = None
     while True:
@@ -63,7 +64,7 @@ def files_between(product: str, band: int | None, start: datetime, end: datetime
 class RangeFile(io.RawIOBase):
     """A read-only, seekable file over HTTP byte ranges, with a small block cache."""
 
-    def __init__(self, url: str, block: int = 256 * 1024):
+    def __init__(self, url: str, block: int = 512 * 1024):
         self.url, self.block, self.pos = url, block, 0
         self.cache: dict[int, bytes] = {}
         self.bytes_fetched = 0

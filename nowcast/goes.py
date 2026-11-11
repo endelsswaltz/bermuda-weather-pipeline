@@ -47,8 +47,9 @@ def _scaled(var: h5py.Dataset, sel=()) -> np.ndarray:
     return data
 
 
-def read_cmip(source, window: tuple[float, float, float, float] | None = None) -> Scene:
-    """Read a GOES-R ABI L2 CMIP file (any sector, one band) from a path or file object.
+def read_cmip(source, window: tuple[float, float, float, float] | None = None, variable: str = "CMI") -> Scene:
+    """Read a GOES-R ABI L2 file on the fixed grid (CMIP by default; any sector, one band) from a
+    path or file object. `variable` picks the field, e.g. "RRQPE" for the rain-rate product.
 
     With `window` = (south, north, west, east) in degrees, only the rows and columns covering
     that box are read, so a remote file fetches just those chunks.
@@ -78,7 +79,7 @@ def read_cmip(source, window: tuple[float, float, float, float] | None = None) -
             rows, cols = slice(r0, r1), slice(c0, c1)
         return Scene(
             start=datetime.fromisoformat(start.replace("Z", "+00:00")).astimezone(timezone.utc),
-            x=x[cols], y=y[rows], bt=_scaled(f["CMI"], (rows, cols)), proj=proj,
+            x=x[cols], y=y[rows], bt=_scaled(f[variable], (rows, cols)), proj=proj,
         )
 
 

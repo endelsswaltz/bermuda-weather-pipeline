@@ -20,7 +20,7 @@ from pathlib import Path
 
 from .goes import Grid
 from .model import Config, run_nowcast
-from .run import HALF_WIDTH, LAT, LON, STEP, load_frames
+from .run import HALF_WIDTH, LAT, LON, STEP, load_band, load_frames
 
 DATA = Path("data")
 RESULTS = DATA / "backtest.jsonl"
@@ -40,38 +40,51 @@ def read_metars(path=DATA / "txkf.csv") -> list[tuple[datetime, bool, str]]:
     return sorted(out)
 
 
-def one(at: datetime) -> dict:
+CACHE = DATA / "cache"
+SPLIT_BAND = 15  # 12.3 um "dirty" longwave window; band 13 minus band 15 separates thin cirrus
+
+
+def load(at: datetime):
+    """Scans for one issue time, from the local cache when present: (times, bt13 x3, bt15 latest)."""
     grid = Grid.around(LAT, LON, HALF_WIDTH, STEP)
+    times, bts, product = load_frames(grid, at, CACHE)
+    return grid, times, bts, load_band(grid, times[-1], SPLIT_BAND, product, CACHE)
+
+
+def one(at: datetime, cfg: Config | None = None) -> dict:
     try:
-        times, bts, product = load_frames(grid, at)
-        nc, _ = run_nowcast(bts, times, grid, LAT, LON, Config())
-        return {"at": at.isoformat(), **{k: v for k, v in nc.__dict__.items() if k != "config"}, "product": product}
+        grid, times, bts, bt15 = load(at)
+        nc, _ = run_nowcast(bts, times, grid, LAT, LON, cfg or Config(), bt15_latest=bt15)
+        return {"at": at.isoformat(), **{k: v for k, v in nc.__dict__.items() if k != "config"}}
     except Exception as e:  # missing scans etc.: record and move on
         return {"at": at.isoformat(), "error": str(e)}
 
 
-def run(days: list[str], workers: int):
-    done = set()
-    if RESULTS.exists():
-        done = {json.loads(line)["at"] for line in RESULTS.read_text().splitlines()}
-    todo = []
+def issue_times(days: list[str]) -> list[datetime]:
+    out = []
     for d in days:
         start = datetime.fromisoformat(d).replace(tzinfo=timezone.utc)
         # Issue at :50 so the 3-hour window lines up with the :55 METARs.
-        todo += [start + timedelta(hours=h, minutes=50) for h in range(24)]
-    todo = [t for t in todo if t.isoformat() not in done]
+        out += [start + timedelta(hours=h, minutes=50) for h in range(24)]
+    return out
+
+
+def run(days: list[str], workers: int, cfg: Config | None = None, results: Path = RESULTS):
+    """Run (or re-run, from the scan cache) every hourly nowcast for `days`; overwrites `results`."""
+    todo = issue_times(days)
     print(f"{len(todo)} nowcasts to run")
-    with ProcessPoolExecutor(workers) as pool, open(RESULTS, "a") as out:
-        for i, fut in enumerate(as_completed([pool.submit(one, t) for t in todo]), 1):
-            r = fut.result()
-            out.write(json.dumps(r) + "\n")
-            out.flush()
-            print(f"[{i}/{len(todo)}] {r['at']} {r.get('status', 'ERROR ' + r.get('error', ''))}")
+    rows = []
+    with ProcessPoolExecutor(workers) as pool:
+        for i, fut in enumerate(as_completed([pool.submit(one, t, cfg) for t in todo]), 1):
+            rows.append(fut.result())
+            if i % 20 == 0 or i == len(todo):
+                print(f"[{i}/{len(todo)}]", flush=True)
+    results.write_text("".join(json.dumps(r) + "\n" for r in sorted(rows, key=lambda r: r["at"])))
 
 
-def score(horizon_h: float = 3.0):
+def score(horizon_h: float = 3.0, results: Path = RESULTS):
     metars = read_metars()
-    rows = [json.loads(line) for line in RESULTS.read_text().splitlines()]
+    rows = [json.loads(line) for line in results.read_text().splitlines()]
     rows = sorted((r for r in rows if "error" not in r), key=lambda r: r["at"])
     hits = misses = false_alarms = quiet = 0
     eta_errors, by_conf = [], {}
@@ -99,7 +112,7 @@ def score(horizon_h: float = 3.0):
     pod = hits / (hits + misses) if hits + misses else float("nan")
     far = false_alarms / (hits + false_alarms) if hits + false_alarms else float("nan")
     csi = hits / (hits + misses + false_alarms) if hits + misses + false_alarms else float("nan")
-    errors = sum(1 for line in RESULTS.read_text().splitlines() if "error" in json.loads(line))
+    errors = sum(1 for line in results.read_text().splitlines() if "error" in json.loads(line))
     print(f"{n} nowcasts ({errors} skipped for missing data), rain within {horizon_h:g} h at TXKF")
     print(f"  hits {hits}  misses {misses}  false alarms {false_alarms}  correct no-rain {quiet}")
     print(f"  POD {pod:.2f}  FAR {far:.2f}  CSI {csi:.2f}  accuracy {(hits + quiet) / n:.2f}")

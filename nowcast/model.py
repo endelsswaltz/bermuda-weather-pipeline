@@ -133,7 +133,8 @@ def drop_specks(mask: np.ndarray, min_px: int) -> np.ndarray:
 
 
 # ---------- the nowcast ----------
-def run_nowcast(frames_k: list[np.ndarray], times, grid: Grid, lat0: float, lon0: float, cfg: Config | None = None) -> tuple[Nowcast, np.ndarray]:
+def run_nowcast(frames_k: list[np.ndarray], times, grid: Grid, lat0: float, lon0: float, cfg: Config | None = None,
+                bt15_latest: np.ndarray | None = None) -> tuple[Nowcast, np.ndarray]:
     """frames_k: BT (K) on `grid`, oldest first, equally spaced (10 min); times: their datetimes.
 
     Returns the nowcast and the smoothed motion field (pixels per 10 min) for map overlays.

@@ -67,3 +67,30 @@ def test_box_and_geojson_cap():
     assert len(boxed) == 2
     gj = to_geojson(boxed, max_features=1)
     assert len(gj["features"]) == 1 and gj["features"][0]["properties"]["t"] == int(now.timestamp() - 60)
+
+
+def test_incremental_keeps_recent_published_flashes_and_adds_only_new_ones(monkeypatch):
+    from nowcast import glm
+    now = datetime(2026, 11, 10, 3, tzinfo=timezone.utc)
+    covered = now.timestamp() - 15 * 60
+    published = {**to_geojson(flashes([LAT, LAT, LAT], [LON, LON, LON], [200, 100, 20], now)), "covered_to": covered}
+    asked = {}
+
+    def fake_load(lat0, lon0, half_width, minutes, end):
+        asked["minutes"] = minutes
+        # One flash already published (20 min old) and one new (5 min old).
+        return flashes([LAT, LAT], [LON, LON], [20, 5], now), 45
+
+    monkeypatch.setattr(glm, "load_flashes", fake_load)
+    fl, n, covered_to = glm.load_incremental(published, LAT, LON, 5, now, keep_min=180)
+    assert asked["minutes"] == 16                      # only the gap since the last run
+    assert sorted(np.round((now.timestamp() - fl.t) / 60)) == [5, 20, 100]  # 200-min flash dropped, no duplicate
+    assert covered_to == now.timestamp() and n == 45
+
+
+def test_incremental_starts_fresh_when_nothing_recent_is_published(monkeypatch):
+    from nowcast import glm
+    now = datetime(2026, 11, 10, 3, tzinfo=timezone.utc)
+    monkeypatch.setattr(glm, "load_flashes", lambda *a: (flashes([LAT], [LON], [3], now), 180))
+    fl, n, _ = glm.load_incremental(None, LAT, LON, 5, now)
+    assert len(fl) == 1 and n == 180
