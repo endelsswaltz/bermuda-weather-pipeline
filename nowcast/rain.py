@@ -5,7 +5,7 @@ power law (Vicente, Scofield and Menzel, 1998), fitted to deep convection:
 
     R = 1.1183e11 * exp(-3.6382e-2 * T ** 1.2)      R in mm/h, T = band 13 brightness temp. in K
 
-with two screens: nothing warmer than -30 C counts, and thin cirrus (band 13 minus band 15
+with two screens: nothing warmer than -38 C counts, and thin cirrus (band 13 minus band 15
 larger than a few kelvin) is removed. It still shows cold, thick, non-raining cloud as rain
 and misses warm showers entirely.
 
@@ -28,14 +28,14 @@ from .goes import Grid
 from .scenes import CONUS, FULL_DISK, listing, nearest, on_grid
 
 KELVIN = 273.15
-WARMEST_RAIN_K = KELVIN - 30.0
+WARMEST_RAIN_K = KELVIN - 38.0   # 235 K, the classic cold-cloud rain threshold (GOES Precipitation Index)
 CIRRUS_SPLIT_K = 2.5
 MAX_RATE = 50.0
 WINDOW_MIN, STEP_MIN = 180, 10
 
 # Lower edge (mm/h) and colour of each class; below the first edge is transparent.
 LEGEND = [
-    (0.2, (130, 190, 255)), (1, (70, 130, 240)), (2, (60, 190, 110)), (5, (240, 220, 70)),
+    (0.5, (130, 190, 255)), (1, (70, 130, 240)), (2, (60, 190, 110)), (5, (240, 220, 70)),
     (10, (245, 150, 50)), (20, (230, 60, 60)), (40, (200, 70, 200)),
 ]
 
