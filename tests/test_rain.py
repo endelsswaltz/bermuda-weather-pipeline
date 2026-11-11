@@ -25,3 +25,12 @@ def test_colorize_is_transparent_when_dry_and_uses_the_legend():
     img = np.array(colorize(np.array([[0.0, 0.1, 0.5, 30.0, np.nan]])))
     assert list(img[0, :, 3]) == [0, 0, 205, 205, 0]
     assert tuple(img[0, 2, :3]) == LEGEND[0][1] and tuple(img[0, 3, :3]) == LEGEND[5][1]
+
+
+def test_frames_sit_on_fixed_ten_minute_marks():
+    from datetime import datetime, timedelta, timezone
+    from nowcast.rain import ten_minute_scans
+    t0 = datetime(2026, 11, 11, 4, 1, 17, tzinfo=timezone.utc)
+    scans = [(t0 + timedelta(minutes=5 * i), f"k{i}") for i in range(7)]  # :01 :06 :11 ... :31
+    assert [t.minute for t, _ in ten_minute_scans(scans)] == [1, 11, 21, 31]
+    assert [t.minute for t, _ in ten_minute_scans(scans[:-1])] == [1, 11, 21]  # newest (:26) is skipped, not shifted to

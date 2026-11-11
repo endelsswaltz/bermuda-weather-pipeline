@@ -61,6 +61,15 @@ def colorize(rate: np.ndarray, alpha: int = 205) -> Image.Image:
     return Image.fromarray(out)
 
 
+def ten_minute_scans(scans: list[tuple[datetime, str]]) -> list[tuple[datetime, str]]:
+    """Every other 5-minute CONUS scan, on fixed clock marks (:01, :11, :21 ...), oldest first.
+
+    Fixed marks, not "10 minutes back from the newest scan", so the same frames come up run
+    after run and already-published ones can be reused.
+    """
+    return [(t, k) for t, k in sorted(scans) if (t.minute // 5) % 2 == 0]
+
+
 def frame_name(t: datetime) -> str:
     return f"rain/{t:%Y%m%dT%H%M}.png"
 
@@ -85,10 +94,7 @@ def build_frames(out: Path, grid: Grid, latest: datetime, previous_base: str | N
     b13 = listing(13, start, latest + timedelta(minutes=3), CONUS)
     b15 = listing(15, start, latest + timedelta(minutes=3), CONUS)
     noaa = listing(None, start, latest + timedelta(minutes=3), "ABI-L2-RRQPEF")
-    def make(k: int):
-        hit = nearest(b13, latest - timedelta(minutes=k * STEP_MIN))
-        if not hit:
-            return None
+    def make(hit: tuple[datetime, str]):
         t, key = hit
         iso, name = t.isoformat(timespec="seconds"), frame_name(t)
         old = previous.get(iso)
@@ -113,7 +119,7 @@ def build_frames(out: Path, grid: Grid, latest: datetime, previous_base: str | N
 
     # Oldest first; in parallel, because the first run has every frame to compute.
     with ThreadPoolExecutor(8) as pool:
-        frames = [f for f in pool.map(make, range(WINDOW_MIN // STEP_MIN, -1, -1)) if f]
+        frames = [f for f in pool.map(make, ten_minute_scans(b13)) if f]
     index = {
         "generated": now.isoformat(timespec="seconds"), "bounds": grid.bounds, "frames": frames,
         "legend": [{"from": e, "rgb": list(c)} for e, c in LEGEND], "units": "mm/h",
