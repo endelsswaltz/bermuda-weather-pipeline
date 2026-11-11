@@ -114,7 +114,13 @@ def main(argv=None):
     cfg = Config(rain_top_c=args.rain_top_c, storm_top_c=args.storm_top_c)
     grid = Grid.around(LAT, LON, HALF_WIDTH, STEP)
     times, bts, product = load_frames(grid)
-    nc, flow = run_nowcast(bts, times, grid, LAT, LON, cfg)
+    # Band 15 from the newest scan, for the thin-cirrus screen; the nowcast runs without it if missing.
+    try:
+        bt15 = load_band(grid, times[-1], 15, product)
+    except Exception as e:  # noqa: BLE001
+        print(f"band 15 unavailable: {e}")
+        bt15 = None
+    nc, flow = run_nowcast(bts, times, grid, LAT, LON, cfg, bt15_latest=bt15)
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)

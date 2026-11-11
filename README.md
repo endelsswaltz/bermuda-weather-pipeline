@@ -33,8 +33,8 @@ The app treats the nowcast as stale when the newest scan is more than 45 minutes
 3. **Motion**: OpenCV Farneback optical flow between three scans 10 minutes apart. Optical flow
    only sees motion where there is cloud, so the field is spread over clear gaps by normalised
    convolution, falling back to the box-wide mean where cloud is sparse.
-4. **Rain proxy**: cloud tops colder than −40 °C (configurable) count as rain-bearing; specks
-   under 4 pixels are dropped.
+4. **Rain proxy**: cloud tops colder than −25 °C (configurable) count as rain-bearing, unless
+   band 13 minus band 15 is over 2 K (thin cirrus). Specks under 4 pixels are dropped.
 5. **Extrapolation**: the rain mask is advected forward in 10-minute steps for 3 hours. The first
    step where it comes within 8 nm of Bermuda is the ETA. Distance and direction are traced back
    along the motion.
@@ -63,8 +63,9 @@ The app treats the nowcast as stale when the newest scan is more than 45 minutes
 
 ## Limits
 
-- Cold cloud tops are a proxy. Thick cirrus can be cold without rain; shallow warm showers
-  (common in Bermuda's trade-wind regime) are often warmer than −40 °C and are missed.
+- Cold cloud tops are a proxy. Thick high cloud can be cold without rain (the thin-cirrus
+  screen only removes thin cloud); shallow warm showers, common in Bermuda's trade-wind
+  regime, are warmer than the threshold and are missed.
 - Steady-motion extrapolation: cells that grow, decay or form on the spot aren't forecast.
 - ETA resolution is the 10-minute step, and the synthetic test arrives a step late on average.
 - GitHub can start scheduled runs 5–30 minutes late, or skip them when busy. Latency from scan
@@ -87,9 +88,27 @@ archive, saved as `data/txkf.csv`
 RA, DZ, SH or TS at the station counts as rain; VCSH (showers in the vicinity) doesn't.
 
 ```bash
-.venv/bin/python -m nowcast.backtest run --days 2026-10-21 2026-10-22   # hourly, resumable
+.venv/bin/python -m nowcast.backtest run --days 2026-10-21 2026-10-22   # hourly; scans cached in data/cache
 .venv/bin/python -m nowcast.backtest score
 ```
+
+Nine days in October–November 2026 (216 hourly nowcasts; rain within 3 h at the airport):
+
+| Settings | Caught (POD) | False alarms (FAR) | CSI | Right overall | ETA within ±60 min |
+| --- | --- | --- | --- | --- | --- |
+| Tops < −40 °C, no screen (first version) | 68% | 27% | 0.55 | 75% | 67% |
+| Tops < −25 °C, thin-cirrus screen at 2 K (current) | 78% | 26% | 0.61 | 78% | 78% |
+
+Read these with care:
+
+- The current settings were chosen on these same nine days, so the improvement is optimistic.
+  Neighbouring settings scored CSI 0.55–0.62, so part of the gain is noise.
+- Days of widespread rain are easy (59 of 63 caught). On the scattered-shower days it catches
+  about half, and on 14 October it caught none: those showers had tops too warm to see.
+- 4 November is 15 false alarms on its own: an overcast deck of thick high cloud, which looks
+  like rain in infrared. A texture screen (dropping smooth cold decks) was tried and made
+  things worse, so it was left out.
+- "High confidence" calls were right 68 times out of 81.
 
 ## Scheduling
 

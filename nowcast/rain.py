@@ -29,7 +29,7 @@ from .scenes import CONUS, FULL_DISK, listing, nearest, on_grid
 
 KELVIN = 273.15
 WARMEST_RAIN_K = KELVIN - 38.0   # 235 K, the classic cold-cloud rain threshold (GOES Precipitation Index)
-CIRRUS_SPLIT_K = 2.5
+CIRRUS_SPLIT_K = 2.0
 MAX_RATE = 50.0
 WINDOW_MIN, STEP_MIN = 180, 10
 

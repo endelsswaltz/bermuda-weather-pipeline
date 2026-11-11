@@ -99,3 +99,13 @@ def test_mercator_rows_put_bermuda_where_leaflet_expects_it():
     target_y = merc(north) + (merc(south) - merc(north)) * 0.5
     expected_lat = np.degrees(2 * np.arctan(np.exp(target_y)) - np.pi / 2)
     assert img[img.shape[0] // 2, 0] == pytest.approx(expected_lat, abs=0.04)
+
+
+def test_thin_cirrus_is_not_rain():
+    grid = Grid.around(LAT, LON, 3, 0.04)
+    frames, times = moving_frames(grid, LON, 0.0)        # cold blob sitting on Bermuda
+    thick = [f - 1.0 for f in frames][-1]                # band 15 one kelvin colder: thick cloud
+    thin = [f - 5.0 for f in frames][-1]                 # five kelvin colder: thin cirrus
+    assert run_nowcast(frames, times, grid, LAT, LON, bt15_latest=thick)[0].status == "rain_now"
+    assert run_nowcast(frames, times, grid, LAT, LON, bt15_latest=thin)[0].status == "no_rain"
+    assert run_nowcast(frames, times, grid, LAT, LON)[0].status == "rain_now"   # no band 15: screen off

@@ -82,54 +82,58 @@ def run(days: list[str], workers: int, cfg: Config | None = None, results: Path 
     results.write_text("".join(json.dumps(r) + "\n" for r in sorted(rows, key=lambda r: r["at"])))
 
 
-def score(horizon_h: float = 3.0, results: Path = RESULTS):
-    metars = read_metars()
-    rows = [json.loads(line) for line in results.read_text().splitlines()]
-    rows = sorted((r for r in rows if "error" not in r), key=lambda r: r["at"])
+def metrics(rows: list[dict], metars, horizon_h: float = 3.0) -> dict:
+    """Contingency counts and skill for rain at TXKF within `horizon_h` of each nowcast."""
     hits = misses = false_alarms = quiet = 0
-    eta_errors, by_conf = [], {}
+    eta_errors, by_conf, by_day = [], {}, {}
     for r in rows:
-        issued = datetime.fromisoformat(r["issued"])
-        at = datetime.fromisoformat(r["at"])
+        if "error" in r:
+            continue
+        issued, at = datetime.fromisoformat(r["issued"]), datetime.fromisoformat(r["at"])
         window = [(t, rain) for t, rain, _ in metars if at < t <= issued + timedelta(hours=horizon_h)]
         observed = any(rain for _, rain in window)
         forecast = r["status"] in ("rain_now", "rain_expected")
+        day = by_day.setdefault(r["at"][:10], {"hit": 0, "miss": 0, "false": 0, "quiet": 0})
         if forecast and observed:
-            hits += 1
+            hits += 1; day["hit"] += 1
             first = next(t for t, rain in window if rain)
             if r["eta"]:
                 eta_errors.append((first - datetime.fromisoformat(r["eta"])).total_seconds() / 60)
         elif observed:
-            misses += 1
+            misses += 1; day["miss"] += 1
         elif forecast:
-            false_alarms += 1
+            false_alarms += 1; day["false"] += 1
         else:
-            quiet += 1
+            quiet += 1; day["quiet"] += 1
         c = by_conf.setdefault(r["confidence"], [0, 0])
         c[0] += 1
         c[1] += forecast == observed
-    n = len(rows)
-    pod = hits / (hits + misses) if hits + misses else float("nan")
-    far = false_alarms / (hits + false_alarms) if hits + false_alarms else float("nan")
-    csi = hits / (hits + misses + false_alarms) if hits + misses + false_alarms else float("nan")
-    errors = sum(1 for line in results.read_text().splitlines() if "error" in json.loads(line))
-    print(f"{n} nowcasts ({errors} skipped for missing data), rain within {horizon_h:g} h at TXKF")
-    print(f"  hits {hits}  misses {misses}  false alarms {false_alarms}  correct no-rain {quiet}")
-    print(f"  POD {pod:.2f}  FAR {far:.2f}  CSI {csi:.2f}  accuracy {(hits + quiet) / n:.2f}")
-    if eta_errors:
-        eta_errors.sort()
-        med = eta_errors[len(eta_errors) // 2]
-        within = sum(abs(e) <= 60 for e in eta_errors) / len(eta_errors)
-        print(f"  ETA (observed minus forecast) median {med:+.0f} min, within ±60 min {within:.0%} (n={len(eta_errors)})")
-    for conf, (total, right) in sorted(by_conf.items()):
+    n = hits + misses + false_alarms + quiet
+    div = lambda a, b: a / b if b else float("nan")  # noqa: E731
+    eta_errors.sort()
+    return {
+        "n": n, "hits": hits, "misses": misses, "false_alarms": false_alarms, "quiet": quiet,
+        "pod": div(hits, hits + misses), "far": div(false_alarms, hits + false_alarms),
+        "csi": div(hits, hits + misses + false_alarms), "accuracy": div(hits + quiet, n),
+        "eta_median": eta_errors[len(eta_errors) // 2] if eta_errors else None,
+        "eta_within_60": div(sum(abs(e) <= 60 for e in eta_errors), len(eta_errors)),
+        "by_conf": by_conf, "by_day": by_day,
+    }
+
+
+def score(horizon_h: float = 3.0, results: Path = RESULTS):
+    rows = [json.loads(line) for line in results.read_text().splitlines()]
+    m = metrics(rows, read_metars(), horizon_h)
+    print(f"{m['n']} nowcasts ({len(rows) - m['n']} skipped for missing data), rain within {horizon_h:g} h at TXKF")
+    print(f"  hits {m['hits']}  misses {m['misses']}  false alarms {m['false_alarms']}  correct no-rain {m['quiet']}")
+    print(f"  POD {m['pod']:.2f}  FAR {m['far']:.2f}  CSI {m['csi']:.2f}  accuracy {m['accuracy']:.2f}")
+    if m["eta_median"] is not None:
+        print(f"  ETA (observed minus forecast) median {m['eta_median']:+.0f} min, within ±60 min {m['eta_within_60']:.0%}")
+    for conf, (total, right) in sorted(m["by_conf"].items()):
         print(f"  confidence {conf}: {right}/{total} right")
-    print("per day:")
-    days = sorted({r["at"][:10] for r in rows})
-    for d in days:
-        day_rows = [r for r in rows if r["at"].startswith(d)]
-        fc = sum(r["status"] in ("rain_now", "rain_expected") for r in day_rows)
-        obs = sum(rain for t, rain, _ in metars if t.isoformat().startswith(d))
-        print(f"  {d}: rain forecast in {fc}/{len(day_rows)} runs, rain in {obs} METARs")
+    print("per day (hit / miss / false alarm / correct no-rain):")
+    for d, c in sorted(m["by_day"].items()):
+        print(f"  {d}: {c['hit']} / {c['miss']} / {c['false']} / {c['quiet']}")
 
 
 def main(argv=None):

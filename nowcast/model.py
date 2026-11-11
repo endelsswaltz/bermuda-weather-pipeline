@@ -3,9 +3,9 @@
 Method, in short:
 1. Brightness temperature (BT) on a regular 0.04° grid around Bermuda (goes.resample).
 2. Cloud motion from dense optical flow (OpenCV Farneback) between consecutive scans.
-3. "Rain-bearing" cloud = tops colder than a threshold (default -40 °C), a common proxy for
-   deep convection; it is a proxy only (thick cirrus can be cold without rain, and shallow
-   warm showers are missed).
+3. "Rain-bearing" cloud = tops colder than a threshold (default -25 °C) that are not thin
+   cirrus (band 13 minus band 15 under 2 K). It is a proxy only: thick high cloud can be cold
+   without rain, and shallow warm showers are missed.
 4. Extrapolate that mask forward along the motion field (semi-Lagrangian, steady motion) in
    10-minute steps up to 3 hours and report the first time it reaches Bermuda.
 """
@@ -24,13 +24,16 @@ KELVIN = 273.15
 
 @dataclass
 class Config:
-    rain_top_c: float = -40.0       # cloud tops colder than this count as rain-bearing
+    rain_top_c: float = -25.0       # cloud tops colder than this count as rain-bearing (see README: backtest)
     storm_top_c: float = -52.0      # coldest top within 50 nm below this sets the storm flag
     cloud_margin_k: float = 6.0     # colder than the clear-ocean reference by this = cloud
     arrival_radius_nm: float = 8.0  # "reaches Bermuda" when rain cloud is within this distance
     min_cells_px: int = 4           # ignore specks smaller than this many pixels
     horizon_min: int = 180
     step_min: int = 10
+    # Thin cirrus is cold but not raining: drop pixels where band 13 minus band 15 exceeds this
+    # many kelvin (None = off; needs the band 15 scan).
+    split_window_k: float | None = 2.0
 
 
 @dataclass
@@ -164,7 +167,10 @@ def run_nowcast(frames_k: list[np.ndarray], times, grid: Grid, lat0: float, lon0
     coldest = float(np.nanmin(latest[near50])) - KELVIN if near50.any() else None
 
     # Rain-bearing cloud, now and extrapolated.
-    rain = drop_specks(finite & (latest < cfg.rain_top_c + KELVIN), cfg.min_cells_px)
+    rain = finite & (latest < cfg.rain_top_c + KELVIN)
+    if cfg.split_window_k is not None and bt15_latest is not None:
+        rain &= ~(np.isfinite(bt15_latest) & (latest - bt15_latest > cfg.split_window_k))
+    rain = drop_specks(rain, cfg.min_cells_px)
     near_island = dist <= cfg.arrival_radius_nm
     nc = Nowcast(
         issued=issued.isoformat(), status="no_rain", text="", config=asdict(cfg),
