@@ -13,8 +13,10 @@ Nothing here needs an account or API key. Raw satellite files are never stored i
 | `nowcast.json` | ~1 KB | Nowcast text, status, ETA, direction, speed (kt), cloud cover within 25/50 nm, coldest cloud top within 50 nm, storm flag, confidence, scan times |
 | `ir.png` | ~60 KB | Band 13 infrared, ±5° around Bermuda, NASA GIBS colour table, rows spaced for Web Mercator; `nowcast.json.image.bounds` gives the corners |
 | `motion.json` | ~12 KB | Cloud motion every 0.5° as `[lat, lon, east kt, north kt]` |
-| `lightning.geojson` | ~0–500 KB | GOES-19 GLM flashes in the ±5° box from the last 60 min, newest first, capped at 5,000; properties `t` (epoch s), `e` (energy, fJ), `a` (area, km²) |
+| `lightning.geojson` | ~0–800 KB | GOES-19 GLM flashes in the ±5° box from the last 3 hours (kept run to run; each run reads only the new files), newest first, capped at 8,000; properties `t` (epoch s), `e` (energy, fJ), `a` (area, km²) |
 | `wind.json` | ~12 KB | Open-Meteo 10 m wind on a 1° grid (11×11), 3 h back to 6 h ahead, as `u`/`v` in kt indexed `[time][row][col]`, rows north to south |
+| `rain/index.json`, `rain/<time>.png` | ~1 KB + ~2–20 KB each | Rain-estimate frames every 10 minutes for the last 3 hours (see `nowcast/rain.py`): NOAA's RRQPE when its feed is live, otherwise an infrared estimate; already-published frames are reused |
+| `sst_breaks.json` | ~30 KB | Sea-temperature breaks (≥ 0.5 °C per 10 km) from NASA MUR SST via NOAA CoastWatch ERDDAP, refreshed twice a day (see `nowcast/ocean.py`) |
 
 `nowcast.json` also carries a `lightning` summary: flashes within 25/50 nm over the last 60 min and
 the last 30 min, and the nearest flash. Any flash within 50 nm in the last 30 min sets `storms_nearby`.
@@ -60,6 +62,7 @@ The app treats the nowcast as stale when the newest scan is more than 45 minutes
 - GOES-19 ABI and GLM: NOAA open data (NODD), no restrictions; credit NOAA.
 - Open-Meteo: CC BY 4.0, free for non-commercial use; credit Open-Meteo.
 - NASA GIBS colour table: NASA open data.
+- MUR SST: NASA JPL, open data; served by NOAA CoastWatch ERDDAP (free to use and redistribute).
 
 ## Limits
 

@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from . import glm, rain, wind
+from . import glm, ocean, rain, wind
 from .goes import Grid
 from .model import KELVIN, Config, pixel_nm, run_nowcast
 from .scenes import listing, nearest, on_grid
@@ -135,6 +135,14 @@ def main(argv=None):
         wind_info = None
 
     try:
+        sst = ocean.fresh_or_fetch(f"{PAGES}sst_breaks.json", LAT, LON, now)
+        (out / "sst_breaks.json").write_text(json.dumps(sst, separators=(",", ":")))
+        sst_info = {"url": "sst_breaks.json", "analysis_time": sst["analysis_time"], "cells": len(sst["cells"])}
+    except Exception as e:  # noqa: BLE001
+        print(f"sea-temperature breaks unavailable: {e}")
+        sst_info = None
+
+    try:
         rain_index = rain.build_frames(out, grid, times[-1], PAGES, to_mercator_rows, now)
         rain_info = {"url": "rain/index.json", "frames": len(rain_index["frames"]), "latest": rain_index["frames"][-1]["time"] if rain_index["frames"] else None}
     except Exception as e:  # noqa: BLE001
@@ -166,6 +174,7 @@ def main(argv=None):
         "image": {"url": "ir.png", "bounds": grid.bounds, "time": times[-1].isoformat()},
         "lightning": lightning,
         "rain": rain_info,
+        "sst_breaks": sst_info,
         "wind": wind_info,
         "source": "NOAA GOES-19 via the NOAA Open Data Dissemination program on AWS",
     }
